@@ -10,46 +10,124 @@
 
   <style>
     body {
-      font-family: sans-serif;
+      font-family: Arial, sans-serif;
       text-align: center;
       padding: 20px;
+      background: #f7f7f7;
     }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
     button {
       font-size: 18px;
       padding: 12px 20px;
       margin: 12px;
+      border: none;
+      border-radius: 10px;
+      background: #222;
+      color: white;
+      cursor: pointer;
     }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     video {
       width: 90vw;
       max-width: 320px;
-      border-radius: 12px;
+      border-radius: 14px;
       background: #000;
+      margin-top: 10px;
     }
+
+    .panel {
+      margin: 14px auto;
+      max-width: 420px;
+      background: white;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+
     .big {
-      font-size: 24px;
-      margin: 10px 0;
+      font-size: 28px;
+      font-weight: bold;
+      margin: 12px 0;
+    }
+
+    .player {
+      color: #1565c0;
+    }
+
+    .ai {
+      color: #c62828;
+    }
+
+    .result-win {
+      color: #2e7d32;
+    }
+
+    .result-lose {
+      color: #d84315;
+    }
+
+    .result-draw {
+      color: #6a1b9a;
+    }
+
+    #countdown {
+      font-size: 42px;
+      font-weight: bold;
+      margin: 12px 0;
+      color: #111;
+      min-height: 50px;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-size: 18px;
+      color: #444;
+    }
+
+    #score {
+      font-size: 22px;
+      font-weight: bold;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
   <h1>Sasso Carta Forbice vs AI</h1>
+
   <button id="startBtn">Avvia fotocamera</button>
 
   <div>
     <video id="video" autoplay playsinline muted></video>
   </div>
 
-  <div class="big" id="player">Tu: —</div>
-  <div class="big" id="ai">AI: —</div>
-  <div class="big" id="result">Risultato: —</div>
-  <div id="status">Pronto</div>
+  <div class="panel">
+    <div id="countdown">Premi Avvia fotocamera</div>
+    <div class="big player" id="player">Tu: —</div>
+    <div class="big ai" id="ai">AI: —</div>
+    <div class="big" id="result">Risultato: —</div>
+    <div id="score">Punteggio — Tu: 0 | AI: 0</div>
+    <div id="status">Pronto</div>
+  </div>
 
   <script>
     const URL = "https://teachablemachine.withgoogle.com/models/mwIUnQ1HC/";
+
     let model;
     let video;
     let running = false;
-    let lastRound = 0;
+    let roundLocked = false;
+
+    let playerScore = 0;
+    let aiScore = 0;
 
     function randomMove() {
       const moves = ["Rock", "Paper", "Scissors"];
@@ -66,6 +144,28 @@
       return "Ha vinto l'AI";
     }
 
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function setResultStyle(text) {
+      const resultEl = document.getElementById("result");
+      resultEl.classList.remove("result-win", "result-lose", "result-draw");
+
+      if (text === "Hai vinto") {
+        resultEl.classList.add("result-win");
+      } else if (text === "Ha vinto l'AI") {
+        resultEl.classList.add("result-lose");
+      } else {
+        resultEl.classList.add("result-draw");
+      }
+    }
+
+    function updateScore() {
+      document.getElementById("score").textContent =
+        `Punteggio — Tu: ${playerScore} | AI: ${aiScore}`;
+    }
+
     async function init() {
       const status = document.getElementById("status");
       const startBtn = document.getElementById("startBtn");
@@ -80,10 +180,6 @@
         model = await tmImage.load(modelURL, metadataURL);
 
         status.textContent = "Richiedo accesso alla fotocamera...";
-
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error("getUserMedia non supportato da questo browser");
-        }
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -104,7 +200,7 @@
 
         running = true;
         status.textContent = "Fotocamera attiva";
-        window.requestAnimationFrame(loop);
+        gameLoop();
 
       } catch (err) {
         console.error(err);
@@ -113,13 +209,7 @@
       }
     }
 
-    async function loop() {
-      if (!running) return;
-      await predict();
-      window.requestAnimationFrame(loop);
-    }
-
-    async function predict() {
+    async function getBestPrediction() {
       const prediction = await model.predict(video);
       let best = prediction[0];
 
@@ -127,18 +217,86 @@
         if (p.probability > best.probability) best = p;
       }
 
-      const now = Date.now();
+      return best;
+    }
 
-      if (best.probability > 0.85 && now - lastRound > 1500) {
-        const playerMove = best.className;
-        const aiMove = randomMove();
+    async function captureStableMove() {
+      let bestOverall = null;
 
-        document.getElementById("player").textContent = "Tu: " + playerMove;
-        document.getElementById("ai").textContent = "AI: " + aiMove;
-        document.getElementById("result").textContent =
-          "Risultato: " + winner(playerMove, aiMove);
+      for (let i = 0; i < 8; i++) {
+        const best = await getBestPrediction();
+        if (!bestOverall || best.probability > bestOverall.probability) {
+          bestOverall = best;
+        }
+        await sleep(120);
+      }
 
-        lastRound = now;
+      return bestOverall;
+    }
+
+    async function playRound() {
+      if (!running || roundLocked) return;
+      roundLocked = true;
+
+      const countdownEl = document.getElementById("countdown");
+      const status = document.getElementById("status");
+
+      countdownEl.textContent = "3";
+      status.textContent = "Prepara la mano...";
+      await sleep(800);
+
+      countdownEl.textContent = "2";
+      await sleep(800);
+
+      countdownEl.textContent = "1";
+      await sleep(800);
+
+      countdownEl.textContent = "VIA!";
+      status.textContent = "Mostra il tuo gesto";
+      await sleep(500);
+
+      const best = await captureStableMove();
+
+      if (!best || best.probability < 0.70) {
+        document.getElementById("player").textContent = "Tu: gesto non riconosciuto";
+        document.getElementById("ai").textContent = "AI: —";
+        document.getElementById("result").textContent = "Risultato: riprova";
+        document.getElementById("result").classList.remove("result-win", "result-lose", "result-draw");
+        countdownEl.textContent = "Riproviamo...";
+        status.textContent = "Tieni la mano più ferma";
+        await sleep(2000);
+        roundLocked = false;
+        return;
+      }
+
+      const playerMove = best.className;
+      const aiMove = randomMove();
+      const outcome = winner(playerMove, aiMove);
+
+      document.getElementById("player").textContent = "Tu: " + playerMove;
+      document.getElementById("ai").textContent = "AI: " + aiMove;
+      document.getElementById("result").textContent = "Risultato: " + outcome;
+      setResultStyle(outcome);
+
+      if (outcome === "Hai vinto") {
+        playerScore++;
+      } else if (outcome === "Ha vinto l'AI") {
+        aiScore++;
+      }
+
+      updateScore();
+
+      countdownEl.textContent = "Turno finito";
+      status.textContent = "Nuovo round tra poco...";
+      await sleep(3000);
+
+      roundLocked = false;
+    }
+
+    async function gameLoop() {
+      while (running) {
+        await playRound();
+        await sleep(500);
       }
     }
 
