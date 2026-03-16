@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sasso Carta Forbice vs AI</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; }
+    button { font-size: 18px; padding: 12px 20px; margin: 12px; }
+    canvas { max-width: 320px; width: 90vw; height: auto; border-radius: 12px; }
+    .big { font-size: 24px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Sasso Carta Forbice vs AI</h1>
+  <button id="startBtn">Avvia fotocamera</button>
+  <div id="camera"></div>
+  <div class="big" id="player">Tu: —</div>
+  <div class="big" id="ai">AI: —</div>
+  <div class="big" id="result">Risultato: —</div>
+  <div id="status"></div>
+
+  <script>
+    const URL = "https://teachablemachine.withgoogle.com/models/mwIUnQ1HC/";
+    let model, webcam, running = false;
+    let lastRound = 0;
+
+    function randomMove() {
+      const moves = ["Rock", "Paper", "Scissors"];
+      return moves[Math.floor(Math.random() * 3)];
+    }
+
+    function winner(player, ai) {
+      if (player === ai) return "Pareggio";
+      if (
+        (player === "Rock" && ai === "Scissors") ||
+        (player === "Paper" && ai === "Rock") ||
+        (player === "Scissors" && ai === "Paper")
+      ) return "Hai vinto";
+      return "Ha vinto l'AI";
+    }
+
+    async function init() {
+      try {
+        document.getElementById("status").textContent = "Carico il modello...";
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+
+        model = await tmImage.load(modelURL, metadataURL);
+
+        document.getElementById("status").textContent = "Avvio la fotocamera...";
+        webcam = new tmImage.Webcam(320, 320, true);
+        await webcam.setup({ facingMode: "user" });
+        await webcam.play();
+
+        const cameraDiv = document.getElementById("camera");
+        cameraDiv.innerHTML = "";
+        cameraDiv.appendChild(webcam.canvas);
+
+        running = true;
+        document.getElementById("status").textContent = "Fotocamera attiva";
+        window.requestAnimationFrame(loop);
+      } catch (err) {
+        console.error(err);
+        document.getElementById("status").textContent =
+          "Errore: " + (err.message || err);
+      }
+    }
+
+    async function loop() {
+      if (!running) return;
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+      let best = prediction[0];
+      for (const p of prediction) {
+        if (p.probability > best.probability) best = p;
+      }
+
+      // Gioca solo se la predizione è abbastanza sicura e non troppo spesso
+      const now = Date.now();
+      if (best.probability > 0.85 && now - lastRound > 1500) {
+        const playerMove = best.className;
+        const aiMove = randomMove();
+
+        document.getElementById("player").textContent = "Tu: " + playerMove;
+        document.getElementById("ai").textContent = "AI: " + aiMove;
+        document.getElementById("result").textContent =
+          "Risultato: " + winner(playerMove, aiMove);
+
+        lastRound = now;
+      }
+    }
+
+    document.getElementById("startBtn").addEventListener("click", init);
+  </script>
+</body>
+</html>
